@@ -5,6 +5,10 @@ from datetime import date
 from datetime import datetime
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.neighbors import KNeighborsClassifier
 import pandas as pd
 import joblib
 
@@ -47,20 +51,66 @@ def identify_face(facearray):
     return model.predict(facearray)
 
 
+# def train_model():
+#     faces = []
+#     labels = []
+#     userlist = os.listdir('static/faces')
+#     for user in userlist:
+#         for imgname in os.listdir(f'static/faces/{user}'):
+#             img = cv2.imread(f'static/faces/{user}/{imgname}')
+#             resized_face = cv2.resize(img, (50, 50))
+#             faces.append(resized_face.ravel())
+#             labels.append(user)
+#     faces = np.array(faces)
+#     knn = KNeighborsClassifier(n_neighbors=5)
+#     knn.fit(faces, labels)
+#     joblib.dump(knn, 'static/face_recognition_model.pkl')
+
 def train_model():
     faces = []
     labels = []
-    userlist = os.listdir('static/faces')
-    for user in userlist:
-        for imgname in os.listdir(f'static/faces/{user}'):
-            img = cv2.imread(f'static/faces/{user}/{imgname}')
-            resized_face = cv2.resize(img, (50, 50))
-            faces.append(resized_face.ravel())
-            labels.append(user)
+
+    user_dirs = os.listdir('static/faces')
+
+    for user in user_dirs:
+        user_path = os.path.join('static/faces', user)
+        if os.path.isdir(user_path):
+            for img_name in os.listdir(user_path):
+                img_path = os.path.join(user_path, img_name)
+                if os.path.isfile(img_path):
+                    img = cv2.imread(img_path)
+                    if img is not None:
+                        resized_face = cv2.resize(img, (50, 50))
+                        faces.append(resized_face.flatten())
+                        labels.append(user)
+
     faces = np.array(faces)
-    knn = KNeighborsClassifier(n_neighbors=5)
-    knn.fit(faces, labels)
-    joblib.dump(knn, 'static/face_recognition_model.pkl')
+    labels = np.array(labels)
+
+    # Split data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(faces, labels, test_size=0.2, random_state=42)
+
+    # Construct a pipeline for preprocessing and modeling
+    pipeline = Pipeline([
+        ('scaler', StandardScaler()),
+        ('knn', KNeighborsClassifier())
+    ])
+
+    # Define parameter grid for grid search
+    param_grid = {
+        'knn__n_neighbors': [3, 5, 7],
+        'knn__weights': ['uniform', 'distance']
+    }
+
+    # Perform grid search to find the best parameters
+    grid_search = GridSearchCV(pipeline, param_grid, cv=3, verbose=1, n_jobs=-1)
+    grid_search.fit(X_train, y_train)
+
+    # Get the best model from grid search
+    best_model = grid_search.best_estimator_
+
+    # Save the trained model
+    joblib.dump(best_model, 'static/face_recognition_model.pkl')
 
 def extract_attendance():
     df = pd.read_csv(f'Attendance/Attendance-{datetoday}.csv')
@@ -107,7 +157,7 @@ def start():
         return render_template('home.html', names=names, rolls=rolls, times=times, l=l, totalreg=totalreg(), datetoday2=datetoday2, mess='There is no trained model in the static folder. Please add a new face to continue.')
 
     ret = True
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture('http://192.168.137.187:4747/video')
     while ret:
         ret, frame = cap.read()
         if len(extract_faces(frame)) > 0:
@@ -142,7 +192,7 @@ def add():
     if not os.path.isdir(userimagefolder):
         os.makedirs(userimagefolder)
     i, j = 0, 0
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture('http://192.168.137.187:4747/video')
     while 1:
         _, frame = cap.read()
         faces = extract_faces(frame)
