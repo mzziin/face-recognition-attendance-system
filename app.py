@@ -5,6 +5,10 @@ from datetime import date
 from datetime import datetime
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.neighbors import KNeighborsClassifier
 import pandas as pd
 import joblib
 
@@ -12,27 +16,29 @@ app = Flask(__name__)
 
 nimgs = 10
 
-imgBackground=cv2.imread("face_background.jpg")
+imgBackground = cv2.imread("face_background.jpg")
 
 datetoday = date.today().strftime("%m_%d_%y")
 datetoday2 = date.today().strftime("%d-%B-%Y")
 
 
-face_detector = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
+face_detector = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
 
 
-if not os.path.isdir('Attendance'):
-    os.makedirs('Attendance')
-if not os.path.isdir('static'):
-    os.makedirs('static')
-if not os.path.isdir('static/faces'):
-    os.makedirs('static/faces')
-if f'Attendance-{datetoday}.csv' not in os.listdir('Attendance'):
-    with open(f'Attendance/Attendance-{datetoday}.csv', 'w') as f:
-        f.write('Name,Roll,Time')
+if not os.path.isdir("Attendance"):
+    os.makedirs("Attendance")
+if not os.path.isdir("static"):
+    os.makedirs("static")
+if not os.path.isdir("static/faces"):
+    os.makedirs("static/faces")
+if f"Attendance-{datetoday}.csv" not in os.listdir("Attendance"):
+    with open(f"Attendance/Attendance-{datetoday}.csv", "w") as f:
+        f.write("Name,Roll,Time")
+
 
 def totalreg():
-    return len(os.listdir('static/faces'))
+    return len(os.listdir("static/faces"))
+
 
 def extract_faces(img):
     try:
@@ -42,130 +48,207 @@ def extract_faces(img):
     except:
         return []
 
+
 def identify_face(facearray):
-    model = joblib.load('static/face_recognition_model.pkl')
+    model = joblib.load("static/face_recognition_model.pkl")
     return model.predict(facearray)
 
 
 def train_model():
     faces = []
     labels = []
-    userlist = os.listdir('static/faces')
-    for user in userlist:
-        for imgname in os.listdir(f'static/faces/{user}'):
-            img = cv2.imread(f'static/faces/{user}/{imgname}')
-            resized_face = cv2.resize(img, (50, 50))
-            faces.append(resized_face.ravel())
-            labels.append(user)
+
+    user_dirs = os.listdir("static/faces")
+
+    for user in user_dirs:
+        user_path = os.path.join("static/faces", user)
+        if os.path.isdir(user_path):
+            for img_name in os.listdir(user_path):
+                img_path = os.path.join(user_path, img_name)
+                if os.path.isfile(img_path):
+                    img = cv2.imread(img_path)
+                    if img is not None:
+                        resized_face = cv2.resize(img, (50, 50))
+                        faces.append(resized_face.flatten())
+                        labels.append(user)
+
     faces = np.array(faces)
-    knn = KNeighborsClassifier(n_neighbors=5)
-    knn.fit(faces, labels)
-    joblib.dump(knn, 'static/face_recognition_model.pkl')
+    labels = np.array(labels)
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        faces, labels, test_size=0.2, random_state=42
+    )
+
+    pipeline = Pipeline([("scaler", StandardScaler()), ("knn", KNeighborsClassifier())])
+
+    param_grid = {
+        "knn__n_neighbors": [3, 5, 7],
+        "knn__weights": ["uniform", "distance"],
+    }
+
+    grid_search = GridSearchCV(pipeline, param_grid, cv=3, verbose=1, n_jobs=-1)
+    grid_search.fit(X_train, y_train)
+
+    best_model = grid_search.best_estimator_
+    joblib.dump(best_model, "static/face_recognition_model.pkl")
+
 
 def extract_attendance():
-    df = pd.read_csv(f'Attendance/Attendance-{datetoday}.csv')
-    names = df['Name']
-    rolls = df['Roll']
-    times = df['Time']
+    df = pd.read_csv(f"Attendance/Attendance-{datetoday}.csv")
+    names = df["Name"]
+    rolls = df["Roll"]
+    times = df["Time"]
     l = len(df)
     return names, rolls, times, l
 
+
 def add_attendance(name):
-    username = name.split('_')[0]
-    userid = name.split('_')[1]
+    username = name.split("_")[0]
+    userid = name.split("_")[1]
     current_time = datetime.now().strftime("%H:%M:%S")
 
-    df = pd.read_csv(f'Attendance/Attendance-{datetoday}.csv')
-    if int(userid) not in list(df['Roll']):
-        with open(f'Attendance/Attendance-{datetoday}.csv', 'a') as f:
-            f.write(f'\n{username},{userid},{current_time}')
+    df = pd.read_csv(f"Attendance/Attendance-{datetoday}.csv")
+    if int(userid) not in list(df["Roll"]):
+        with open(f"Attendance/Attendance-{datetoday}.csv", "a") as f:
+            f.write(f"\n{username},{userid},{current_time}")
+
 
 def getallusers():
-    userlist = os.listdir('static/faces')
+    userlist = os.listdir("static/faces")
     names = []
     rolls = []
     l = len(userlist)
 
     for i in userlist:
-        name, roll = i.split('_')
+        name, roll = i.split("_")
         names.append(name)
         rolls.append(roll)
 
     return userlist, names, rolls, l
 
 
-@app.route('/')
+@app.route("/")
 def home():
     names, rolls, times, l = extract_attendance()
-    return render_template('home.html', names=names, rolls=rolls, times=times, l=l, totalreg=totalreg(), datetoday2=datetoday2)
+    return render_template(
+        "home.html",
+        names=names,
+        rolls=rolls,
+        times=times,
+        l=l,
+        totalreg=totalreg(),
+        datetoday2=datetoday2,
+    )
 
-@app.route('/start', methods=['GET'])
+
+@app.route("/start", methods=["GET"])
 def start():
     names, rolls, times, l = extract_attendance()
 
-    if 'face_recognition_model.pkl' not in os.listdir('static'):
-        return render_template('home.html', names=names, rolls=rolls, times=times, l=l, totalreg=totalreg(), datetoday2=datetoday2, mess='There is no trained model in the static folder. Please add a new face to continue.')
+    if "face_recognition_model.pkl" not in os.listdir("static"):
+        return render_template(
+            "home.html",
+            names=names,
+            rolls=rolls,
+            times=times,
+            l=l,
+            totalreg=totalreg(),
+            datetoday2=datetoday2,
+            mess="There is no trained model in the static folder. Please add a new face to continue.",
+        )
 
     ret = True
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture("http://192.168.137.187:4747/video")
     while ret:
         ret, frame = cap.read()
         if len(extract_faces(frame)) > 0:
             (x, y, w, h) = extract_faces(frame)[0]
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (86, 32, 251), 1)
-            cv2.rectangle(frame, (x, y), (x+w, y-40), (86, 32, 251), -1)
-            face = cv2.resize(frame[y:y+h, x:x+w], (50, 50))
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (86, 32, 251), 1)
+            cv2.rectangle(frame, (x, y), (x + w, y - 40), (86, 32, 251), -1)
+            face = cv2.resize(frame[y : y + h, x : x + w], (50, 50))
             identified_person = identify_face(face.reshape(1, -1))[0]
             add_attendance(identified_person)
-            cv2.rectangle(frame, (x,y), (x+w, y+h), (0,0,255), 1)
-            cv2.rectangle(frame,(x,y),(x+w,y+h),(50,50,255),2)
-            cv2.rectangle(frame,(x,y-40),(x+w,y),(50,50,255),-1)
-            cv2.putText(frame, f'{identified_person}', (x,y-15), cv2.FONT_HERSHEY_COMPLEX, 1, (255,255,255), 1)
-            cv2.rectangle(frame, (x,y), (x+w, y+h), (50,50,255), 1)
-        imgBackground[162:162 + 480, 55:55 + 640] = frame
-        cv2.imshow('Attendance', imgBackground)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 1)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (50, 50, 255), 2)
+            cv2.rectangle(frame, (x, y - 40), (x + w, y), (50, 50, 255), -1)
+            cv2.putText(
+                frame,
+                f"{identified_person}",
+                (x, y - 15),
+                cv2.FONT_HERSHEY_COMPLEX,
+                1,
+                (255, 255, 255),
+                1,
+            )
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (50, 50, 255), 1)
+        imgBackground[162 : 162 + 480, 55 : 55 + 640] = frame
+        cv2.imshow("Attendance", imgBackground)
 
-        if cv2.waitKey(1) & 0xFF == ord('k'):
+        if cv2.waitKey(1) & 0xFF == ord("k"):
             break
     cap.release()
     cv2.destroyAllWindows()
     names, rolls, times, l = extract_attendance()
-    return render_template('home.html', names=names, rolls=rolls, times=times, l=l, totalreg=totalreg(), datetoday2=datetoday2)
+    return render_template(
+        "home.html",
+        names=names,
+        rolls=rolls,
+        times=times,
+        l=l,
+        totalreg=totalreg(),
+        datetoday2=datetoday2,
+    )
 
 
-
-@app.route('/add', methods=['GET', 'POST'])
+@app.route("/add", methods=["GET", "POST"])
 def add():
-    newusername = request.form['newusername']
-    newuserid = request.form['newuserid']
-    userimagefolder = 'static/faces/'+newusername+'_'+str(newuserid)
+    newusername = request.form["newusername"]
+    newuserid = request.form["newuserid"]
+    userimagefolder = "static/faces/" + newusername + "_" + str(newuserid)
     if not os.path.isdir(userimagefolder):
         os.makedirs(userimagefolder)
     i, j = 0, 0
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture("http://192.168.137.187:4747/video")
     while 1:
         _, frame = cap.read()
         faces = extract_faces(frame)
-        for (x, y, w, h) in faces:
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 20), 2)
-            cv2.putText(frame, f'Images Captured: {i}/{nimgs}', (30, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 20), 2, cv2.LINE_AA)
+        for x, y, w, h in faces:
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 20), 2)
+            cv2.putText(
+                frame,
+                f"Images Captured: {i}/{nimgs}",
+                (30, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (255, 0, 20),
+                2,
+                cv2.LINE_AA,
+            )
             if j % 5 == 0:
-                name = newusername+'_'+str(i)+'.jpg'
-                cv2.imwrite(userimagefolder+'/'+name, frame[y:y+h, x:x+w])
+                name = newusername + "_" + str(i) + ".jpg"
+                cv2.imwrite(userimagefolder + "/" + name, frame[y : y + h, x : x + w])
                 i += 1
             j += 1
-        if j == nimgs*5:
+        if j == nimgs * 5:
             break
-        cv2.imshow('Adding new User', frame)
+        cv2.imshow("Adding new User", frame)
         if cv2.waitKey(1) == 27:
             break
     cap.release()
     cv2.destroyAllWindows()
-    print('Training Model')
+    print("Training Model")
     train_model()
     names, rolls, times, l = extract_attendance()
-    return render_template('home.html', names=names, rolls=rolls, times=times, l=l, totalreg=totalreg(), datetoday2=datetoday2)
+    return render_template(
+        "home.html",
+        names=names,
+        rolls=rolls,
+        times=times,
+        l=l,
+        totalreg=totalreg(),
+        datetoday2=datetoday2,
+    )
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     app.run(debug=True)
